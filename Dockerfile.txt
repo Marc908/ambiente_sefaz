@@ -1,21 +1,12 @@
-# Imagem base Python
 FROM python:3.12-slim
 
-# Define diretório de trabalho
 WORKDIR /app
 
-# Copia todos os arquivos do projeto
 COPY . /app
 
-# Instala dependências
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expõe porta (não estritamente necessário, mas bom para documentação)
-EXPOSE 8080
+# Não importa a porta, o provedor injeta via $PORT
+EXPOSE 8080  
 
-# Comando para rodar a API
-# Usa a variável de ambiente PORT do provedor, ou 8081 como fallback local
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8081}"]
-
-
-
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT"]
