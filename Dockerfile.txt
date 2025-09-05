@@ -2,11 +2,14 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY . /app
-
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Não importa a porta, o provedor injeta via $PORT
-EXPOSE 8080  
+COPY . /app
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT"]
+# usa a porta que a plataforma disponibilizar
+ENV PORT=8081
+
+EXPOSE $PORT
+
+CMD exec uvicorn app:app --host 0.0.0.0 --port $PORT
