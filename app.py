@@ -1,11 +1,13 @@
 import os
 from fastapi import FastAPI, HTTPException
-import httpx
+from pydantic import BaseModel
 from lxml import etree
+import httpx
 import uvicorn
 
 app = FastAPI(title="API Ambiente SEFAZ")
 
+# URLs da SEFAZ por UF
 SEFAZ_UF_URLS = {
     "AC": "https://nfe.sefaz.ac.gov.br/nfeweb/services/NfeStatusServico2.asmx",
     "AL": "https://nfe.sefaz.al.gov.br/nfeweb/services/NfeStatusServico2.asmx",
@@ -82,8 +84,13 @@ async def consultar_status_soap(url: str, uf_code: str):
     except Exception as e:
         return {"disponivel": False, "motivo": str(e)}
 
+# Modelo de request para POST
+class UFRequest(BaseModel):
+    uf: str
+
+# Endpoint GET
 @app.get("/sefaz/status")
-async def status_sefaz(uf: str):
+async def status_sefaz_get(uf: str):
     uf = uf.upper()
     if uf not in SEFAZ_UF_URLS:
         raise HTTPException(status_code=400, detail="UF inválida")
@@ -91,12 +98,20 @@ async def status_sefaz(uf: str):
     status_uf = await consultar_status_soap(SEFAZ_UF_URLS[uf], UF_CODES[uf])
     status_nacional = await consultar_status_soap(NACIONAL_URL, UF_CODES[uf])
     
-    return {
-        "uf": uf,
-        "status_uf": status_uf,
-        "status_nacional": status_nacional
-    }
+    return {"uf": uf, "status_uf": status_uf, "status_nacional": status_nacional}
+
+# Endpoint POST
+@app.post("/sefaz/status")
+async def status_sefaz_post(req: UFRequest):
+    uf = req.uf.upper()
+    if uf not in SEFAZ_UF_URLS:
+        raise HTTPException(status_code=400, detail="UF inválida")
+    
+    status_uf = await consultar_status_soap(SEFAZ_UF_URLS[uf], UF_CODES[uf])
+    status_nacional = await consultar_status_soap(NACIONAL_URL, UF_CODES[uf])
+    
+    return {"uf": uf, "status_uf": status_uf, "status_nacional": status_nacional}
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8080))  # Railway define PORT, local fallback = 8080
-    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=False)
+    port = int(os.getenv("PORT", 8081))  # fallback = 8081 para não conflitar
+    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)
