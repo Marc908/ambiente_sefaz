@@ -1,6 +1,8 @@
+import os
 from fastapi import FastAPI, HTTPException
 import httpx
 from lxml import etree
+import uvicorn
 
 app = FastAPI(title="API Ambiente SEFAZ")
 
@@ -59,45 +61,42 @@ UF_CODES = {
 
 async def consultar_status_soap(url: str, uf_code: str):
     body = SOAP_BODY_TEMPLATE.format(cUF=uf_code)
-    headers = {
-        "Content-Type": "text/xml; charset=utf-8",
-        "SOAPAction": "nfeStatusServicoNF"
-    }
+    headers = {"Content-Type": "text/xml; charset=utf-8", "SOAPAction": "nfeStatusServicoNF"}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(url, data=body.encode("utf-8"), headers=headers)
+            response = await client.post(url, data=body.encode('utf-8'), headers=headers)
             if response.status_code != 200:
                 return {"disponivel": False, "motivo": f"HTTP {response.status_code}"}
-
+            
             xml_root = etree.fromstring(response.content)
             ns = {
-                "soap": "http://schemas.xmlsoap.org/soap/envelope/",
-                "nfe": "http://www.portalfiscal.inf.br/nfe/wsdl/NfeStatusServico2"
+                'soap': 'http://schemas.xmlsoap.org/soap/envelope/',
+                'nfe': 'http://www.portalfiscal.inf.br/nfe/wsdl/NfeStatusServico2'
             }
-            xMotivo_elem = xml_root.xpath("//nfe:xMotivo", namespaces=ns)
+            xMotivo_elem = xml_root.xpath('//nfe:xMotivo', namespaces=ns)
             if xMotivo_elem:
                 motivo = xMotivo_elem[0].text
-                disponivel = "disponível" in motivo.lower() or "disponivel" in motivo.lower() or "em operacao" in motivo.lower()
+                disponivel = "disponivel" in motivo.lower() or "em operacao" in motivo.lower()
                 return {"disponivel": disponivel, "motivo": motivo}
             return {"disponivel": False, "motivo": "Resposta inválida da SEFAZ"}
     except Exception as e:
         return {"disponivel": False, "motivo": str(e)}
-
-@app.get("/")
-async def raiz():
-    return {"status": "ok", "mensagem": "API Ambiente SEFAZ rodando!"}
 
 @app.get("/sefaz/status")
 async def status_sefaz(uf: str):
     uf = uf.upper()
     if uf not in SEFAZ_UF_URLS:
         raise HTTPException(status_code=400, detail="UF inválida")
-
+    
     status_uf = await consultar_status_soap(SEFAZ_UF_URLS[uf], UF_CODES[uf])
     status_nacional = await consultar_status_soap(NACIONAL_URL, UF_CODES[uf])
-
+    
     return {
         "uf": uf,
         "status_uf": status_uf,
         "status_nacional": status_nacional
     }
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 8080))  # Railway define PORT, local fallback = 8080
+    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=False)
