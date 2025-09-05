@@ -1,5 +1,5 @@
 fastapi==0.111.0
 uvicorn[standard]==0.23.2
-httpx==0.26.1
+httpx==0.28.1
 lxml==4.9.3
 pydantic==2.6.0
