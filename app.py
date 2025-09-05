@@ -137,5 +137,6 @@ async def status_sefaz_post(req: StatusRequest):
     return {"uf": uf, "ambiente": ambiente, "status": status}
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8081))
+    port = int(os.getenv("PORT", 8080))
     uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)
+
