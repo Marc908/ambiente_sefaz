@@ -5,7 +5,7 @@ import httpx
 from lxml import etree
 import uvicorn
 
-app = FastAPI(title="API Ambiente SEFAZ - Mock Mode")
+app = FastAPI(title="API Ambiente SEFAZ - Mock + Nacional")
 
 SEFAZ_UF_URLS = {
     "SP": "https://nfe.sefaz.sp.gov.br/nfeweb/services/NfeStatusServico2.asmx",
@@ -61,29 +61,37 @@ async def consultar_status_real(url: str, uf_code: str):
         return None
 
 async def consultar_status(uf: str, ambiente: str):
-    """Consulta SEFAZ com fallback para mock."""
+    """Consulta estadual e nacional, com fallback mock."""
     uf_code = UF_CODES.get(uf)
     if not uf_code:
-        return {"uf": uf, "ambiente": ambiente, "disponivel": False, "motivo": "UF inválida"}
+        raise HTTPException(status_code=400, detail="UF inválida")
 
-    url = SEFAZ_UF_URLS.get(uf, NACIONAL_URL)
+    url_estadual = SEFAZ_UF_URLS.get(uf)
+    url_nacional = NACIONAL_URL
 
-    # tenta consulta real
-    resultado = await consultar_status_real(url, uf_code)
-
-    # se falhar, mocka ativo
-    if not resultado:
-        return {
-            "uf": uf,
-            "ambiente": ambiente,
+    # estadual
+    result_estadual = None
+    if url_estadual:
+        result_estadual = await consultar_status_real(url_estadual, uf_code)
+    if not result_estadual:
+        result_estadual = {
             "disponivel": True,
-            "motivo": "Mock: serviço simulado como disponível"
+            "motivo": "Mock: serviço estadual simulado como disponível"
+        }
+
+    # nacional
+    result_nacional = await consultar_status_real(url_nacional, uf_code)
+    if not result_nacional:
+        result_nacional = {
+            "disponivel": True,
+            "motivo": "Mock: serviço nacional simulado como disponível"
         }
 
     return {
         "uf": uf,
         "ambiente": ambiente,
-        **resultado
+        "status_estadual": result_estadual,
+        "status_nacional": result_nacional
     }
 
 @app.post("/sefaz/status")
