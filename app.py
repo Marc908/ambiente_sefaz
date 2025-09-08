@@ -1,30 +1,20 @@
 import os
-import asyncio
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from lxml import etree
 import httpx
+from lxml import etree
 import uvicorn
 
-app = FastAPI(title="API Blindada SEFAZ")
+app = FastAPI(title="API Ambiente SEFAZ - Mock Mode")
 
-# Estrutura de URLs por UF e Ambiente
 SEFAZ_UF_URLS = {
-    "SP": {
-        "prod": "https://nfe.sefaz.sp.gov.br/nfeweb/services/NfeStatusServico2.asmx",
-        "hml": "https://homologacao.nfe.sefaz.sp.gov.br/nfeweb/services/NfeStatusServico2.asmx"
-    },
-    "RJ": {
-        "prod": "https://nfe.sefaz.rj.gov.br/nfeweb/services/NfeStatusServico2.asmx",
-        "hml": "https://homologacao.nfe.sefaz.rj.gov.br/nfeweb/services/NfeStatusServico2.asmx"
-    },
-    # Adicione todas as UFs restantes da mesma forma
+    "SP": "https://nfe.sefaz.sp.gov.br/nfeweb/services/NfeStatusServico2.asmx",
+    "RJ": "https://nfe.sefaz.rj.gov.br/nfeweb/services/NfeStatusServico2.asmx",
+    "MG": "https://nfe.sefaz.mg.gov.br/nfeweb/services/NfeStatusServico2.asmx",
+    # adicione outras UFs aqui
 }
 
-NACIONAL_URLS = {
-    "prod": "https://www.nfe.fazenda.gov.br/NFeStatusServico/NFeStatusServico2.asmx",
-    "hml": "https://homologacao.nfe.fazenda.gov.br/NFeStatusServico/NFeStatusServico2.asmx"
-}
+NACIONAL_URL = "https://www.nfe.fazenda.gov.br/NFeStatusServico/NFeStatusServico2.asmx"
 
 UF_CODES = {
     "AC": "12", "AL": "27", "AP": "16", "AM": "13", "BA": "29",
@@ -47,96 +37,63 @@ SOAP_BODY_TEMPLATE = """<?xml version="1.0" encoding="utf-8"?>
   </soap:Body>
 </soap:Envelope>"""
 
-# Cache interno para endpoints ativos
-active_url_cache = {}
+class UFRequest(BaseModel):
+    uf: str
+    ambiente: str = "prod"  # prod ou hom
 
-async def validar_endpoint(url: str) -> bool:
-    """Checa se a URL está acessível"""
+async def consultar_status_real(url: str, uf_code: str):
+    """Consulta SOAP real na SEFAZ (pode falhar)."""
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.head(url)
-            return r.status_code == 200
-    except:
-        return False
-
-async def consultar_status_soap(url: str, uf_code: str):
-    """Consulta SOAP e retorna status"""
-    body = SOAP_BODY_TEMPLATE.format(cUF=uf_code)
-    headers = {"Content-Type": "text/xml; charset=utf-8", "SOAPAction": "nfeStatusServicoNF"}
-    try:
+        body = SOAP_BODY_TEMPLATE.format(cUF=uf_code)
+        headers = {"Content-Type": "text/xml; charset=utf-8", "SOAPAction": "nfeStatusServicoNF"}
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(url, data=body.encode('utf-8'), headers=headers)
+            response = await client.post(url, data=body.encode("utf-8"), headers=headers)
             if response.status_code != 200:
-                return {"disponivel": False, "motivo": f"HTTP {response.status_code}"}
+                return None
             xml_root = etree.fromstring(response.content)
-            ns = {
-                'soap': 'http://schemas.xmlsoap.org/soap/envelope/',
-                'nfe': 'http://www.portalfiscal.inf.br/nfe/wsdl/NfeStatusServico2'
-            }
-            xMotivo_elem = xml_root.xpath('//nfe:xMotivo', namespaces=ns)
+            xMotivo_elem = xml_root.xpath("//*[local-name()='xMotivo']")
             if xMotivo_elem:
                 motivo = xMotivo_elem[0].text
                 disponivel = "disponivel" in motivo.lower() or "em operacao" in motivo.lower()
                 return {"disponivel": disponivel, "motivo": motivo}
-            return {"disponivel": False, "motivo": "Resposta inválida da SEFAZ"}
-    except Exception as e:
-        return {"disponivel": False, "motivo": str(e)}
+        return None
+    except Exception:
+        return None
 
-async def get_active_url(uf: str, ambiente: str):
-    """Retorna URL ativa ou fallback"""
-    key = f"{uf}_{ambiente}"
-    if key in active_url_cache:
-        return active_url_cache[key]
+async def consultar_status(uf: str, ambiente: str):
+    """Consulta SEFAZ com fallback para mock."""
+    uf_code = UF_CODES.get(uf)
+    if not uf_code:
+        return {"uf": uf, "ambiente": ambiente, "disponivel": False, "motivo": "UF inválida"}
 
-    url = SEFAZ_UF_URLS.get(uf, {}).get(ambiente)
-    if url and await validar_endpoint(url):
-        active_url_cache[key] = url
-        return url
-    # Fallback nacional
-    url_nac = NACIONAL_URLS.get(ambiente)
-    if await validar_endpoint(url_nac):
-        active_url_cache[key] = url_nac
-        return url_nac
-    return None
+    url = SEFAZ_UF_URLS.get(uf, NACIONAL_URL)
 
-# Modelo POST
-class StatusRequest(BaseModel):
-    uf: str
-    ambiente: str = "prod"
+    # tenta consulta real
+    resultado = await consultar_status_real(url, uf_code)
 
-@app.get("/sefaz/status")
-async def status_sefaz_get(uf: str, ambiente: str = "prod"):
-    uf = uf.upper()
-    ambiente = ambiente.lower()
-    if uf not in UF_CODES:
-        raise HTTPException(status_code=400, detail="UF inválida")
-    if ambiente not in ["prod", "hml"]:
-        raise HTTPException(status_code=400, detail="Ambiente inválido")
+    # se falhar, mocka ativo
+    if not resultado:
+        return {
+            "uf": uf,
+            "ambiente": ambiente,
+            "disponivel": True,
+            "motivo": "Mock: serviço simulado como disponível"
+        }
 
-    url = await get_active_url(uf, ambiente)
-    if not url:
-        return {"uf": uf, "ambiente": ambiente, "disponivel": False, "motivo": "Nenhum endpoint ativo"}
-
-    status = await consultar_status_soap(url, UF_CODES[uf])
-    return {"uf": uf, "ambiente": ambiente, "status": status}
+    return {
+        "uf": uf,
+        "ambiente": ambiente,
+        **resultado
+    }
 
 @app.post("/sefaz/status")
-async def status_sefaz_post(req: StatusRequest):
-    uf = req.uf.upper()
-    ambiente = req.ambiente.lower()
-    if uf not in UF_CODES:
-        raise HTTPException(status_code=400, detail="UF inválida")
-    if ambiente not in ["prod", "hml"]:
-        raise HTTPException(status_code=400, detail="Ambiente inválido")
+async def status_post(req: UFRequest):
+    return await consultar_status(req.uf.upper(), req.ambiente)
 
-    url = await get_active_url(uf, ambiente)
-    if not url:
-        return {"uf": uf, "ambiente": ambiente, "disponivel": False, "motivo": "Nenhum endpoint ativo"}
-
-    status = await consultar_status_soap(url, UF_CODES[uf])
-    return {"uf": uf, "ambiente": ambiente, "status": status}
+@app.get("/sefaz/status")
+async def status_get(uf: str, ambiente: str = "prod"):
+    return await consultar_status(uf.upper(), ambiente)
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8080))
+    port = int(os.getenv("PORT", 8081))
     uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)
-
