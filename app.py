@@ -4,8 +4,9 @@ from pydantic import BaseModel
 import httpx
 from lxml import etree
 import uvicorn
+from datetime import datetime
 
-app = FastAPI(title="API Ambiente SEFAZ - Mock + Nacional")
+app = FastAPI(title="API Ambiente SEFAZ - Nacional + Estadual (real)")
 
 SEFAZ_UF_URLS = {
     "SP": "https://nfe.sefaz.sp.gov.br/nfeweb/services/NfeStatusServico2.asmx",
@@ -42,26 +43,43 @@ class UFRequest(BaseModel):
     ambiente: str = "prod"  # prod ou hom
 
 async def consultar_status_real(url: str, uf_code: str):
-    """Consulta SOAP real na SEFAZ (pode falhar)."""
+    """Consulta SOAP real na SEFAZ."""
+    inicio = datetime.now()
     try:
         body = SOAP_BODY_TEMPLATE.format(cUF=uf_code)
-        headers = {"Content-Type": "text/xml; charset=utf-8", "SOAPAction": "nfeStatusServicoNF"}
+        headers = {
+            "Content-Type": "text/xml; charset=utf-8",
+            "SOAPAction": "nfeStatusServicoNF"
+        }
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(url, data=body.encode("utf-8"), headers=headers)
+            duracao = (datetime.now() - inicio).total_seconds()
+
             if response.status_code != 200:
-                return None
+                raise HTTPException(status_code=503, detail="Falha ao consultar SEFAZ")
+
             xml_root = etree.fromstring(response.content)
-            xMotivo_elem = xml_root.xpath("//*[local-name()='xMotivo']")
-            if xMotivo_elem:
-                motivo = xMotivo_elem[0].text
-                disponivel = "disponivel" in motivo.lower() or "em operacao" in motivo.lower()
-                return {"disponivel": disponivel, "motivo": motivo}
-        return None
-    except Exception:
-        return None
+
+            def get_val(tag):
+                elem = xml_root.xpath(f"//*[local-name()='{tag}']")
+                return elem[0].text if elem else None
+
+            return {
+                "codigo_retorno": get_val("cStat"),
+                "motivo": get_val("xMotivo"),
+                "data_recebimento": get_val("dhRecbto"),
+                "versao": get_val("versao"),
+                "ambiente_retorno": get_val("tpAmb"),
+                "ultima_consulta": datetime.now().isoformat(),
+                "latencia_segundos": duracao
+            }
+
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Erro na consulta SEFAZ: {str(e)}")
 
 async def consultar_status(uf: str, ambiente: str):
-    """Consulta estadual e nacional, com fallback mock."""
+    """Consulta estadual e nacional (apenas dados reais)."""
     uf_code = UF_CODES.get(uf)
     if not uf_code:
         raise HTTPException(status_code=400, detail="UF inválida")
@@ -69,23 +87,12 @@ async def consultar_status(uf: str, ambiente: str):
     url_estadual = SEFAZ_UF_URLS.get(uf)
     url_nacional = NACIONAL_URL
 
-    # estadual
-    result_estadual = None
-    if url_estadual:
-        result_estadual = await consultar_status_real(url_estadual, uf_code)
-    if not result_estadual:
-        result_estadual = {
-            "disponivel": True,
-            "motivo": "Mock: serviço estadual simulado como disponível"
-        }
+    if not url_estadual:
+        raise HTTPException(status_code=400, detail=f"UF {uf} não tem URL configurada")
 
-    # nacional
+    # consultas reais
+    result_estadual = await consultar_status_real(url_estadual, uf_code)
     result_nacional = await consultar_status_real(url_nacional, uf_code)
-    if not result_nacional:
-        result_nacional = {
-            "disponivel": True,
-            "motivo": "Mock: serviço nacional simulado como disponível"
-        }
 
     return {
         "uf": uf,
