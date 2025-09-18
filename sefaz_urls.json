@@ -1,10 +1,1 @@
-{
-  "SP": {
-    "producao": "https://nfe.fazenda.sp.gov.br/ws/nfestatusservico4.asmx",
-    "homologacao": "https://homologacao.nfe.fazenda.sp.gov.br/ws/nfestatusservico4.asmx"
-  },
-  "RJ": {
-    "producao": "https://www4.fazenda.rj.gov.br/nfe/services/NfeStatusServico4",
-    "homologacao": "https://www4.fazenda.rj.gov.br/nfe/services/NfeStatusServico4"
-  }
-}
+
