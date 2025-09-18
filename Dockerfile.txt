@@ -1,20 +1,14 @@
-# Imagem base oficial Python
 FROM python:3.11-slim
 
-# Define diretório de trabalho dentro do container
 WORKDIR /app
 
-# Copia os arquivos de dependências
 COPY requirements.txt .
-
-# Instala dependências
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copia o código da aplicação
 COPY . .
 
-# Expõe a porta da API
-EXPOSE 8081
+# Primeiro atualiza os endpoints
+RUN python updater.py
 
-# Comando padrão para rodar a API
+EXPOSE 8081
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8081"]
